@@ -501,7 +501,7 @@ where
 	/// This panics if `index` is out of bounds (including `self.len()`).
 	#[inline]
 	pub fn insert(&mut self, index: usize, value: bool) {
-		self.assert_in_bounds(index, 0 ..= self.len());
+		self.assert_in_bounds(index, 0 .. self.len());
 		self.push(value);
 		unsafe { self.get_unchecked_mut(index ..) }.rotate_right(1);
 	}
