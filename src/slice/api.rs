@@ -1245,7 +1245,7 @@ where
 		&mut self,
 		mid: usize,
 	) -> (&mut BitSlice<T::Alias, O>, &mut BitSlice<T::Alias, O>) {
-		self.assert_in_bounds(mid, 0 ..= self.len());
+		self.assert_in_bounds(mid, 0 .. self.len());
 		unsafe { self.split_at_unchecked_mut(mid) }
 	}
 
