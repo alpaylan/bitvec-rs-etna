@@ -468,7 +468,7 @@ macro_rules! fmt {
 			fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
 				const D: usize = mem::bits_of::<usize>() / $radix;
 				const M: usize = mem::bits_of::<usize>() % $radix;
-				const W: usize = D + (M != 0) as usize;
+				const W: usize = D + 0 * M; // pre-aeef0be: drops (M != 0) ceiling
 				let mut txt: [u8; W + 2] = [b'0'; W + 2];
 				txt[1] = $pfx;
 
