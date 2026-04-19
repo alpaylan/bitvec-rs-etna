@@ -1,0 +1,12 @@
+diff --git a/src/vec/traits.rs b/src/vec/traits.rs
+--- a/src/vec/traits.rs
++++ b/src/vec/traits.rs
+@@ -198,7 +198,7 @@ where
+ {
+ 	#[inline]
+ 	fn partial_cmp(&self, other: &Rhs) -> Option<cmp::Ordering> {
+-		other.partial_cmp(self.as_bitslice()).map(|o| o.reverse())
++		other.partial_cmp(self.as_bitslice())
+ 	}
+ }
+

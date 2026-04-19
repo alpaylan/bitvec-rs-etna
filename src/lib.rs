@@ -39,6 +39,9 @@ pub mod store;
 pub mod vec;
 pub mod view;
 
+#[cfg(feature = "std")]
+pub mod etna;
+
 #[doc = include_str!("../doc/prelude.md")]
 pub mod prelude {
 	pub use crate::{

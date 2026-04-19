@@ -59,6 +59,10 @@ testing = [
 [dependencies]
 radium = "0.7"
 tap = "1"
+proptest   = "1"
+quickcheck = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck", features = ["etna"] }
+crabcheck  = { path = "/Users/akeles/Programming/projects/PbtBenchmark/crabcheck" }
+hegeltest  = "0.3.7"
 
 [dependencies.funty]
 version = "^2.0"
