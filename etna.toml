@@ -1,0 +1,88 @@
+# ETNA workload index for bitvec.
+#
+# One [[variant]] per injected mutation. Source of truth for variant->property
+# mapping. Every other fact is derivable from the source tree:
+#   - ls patches/*.patch                          (patch-based variants)
+#   - grep -rn "pub fn property_" src/            (property functions)
+#   - grep -rn "fn witness_.*_case_" tests/       (witness tests)
+#
+# Base commit for this workload is HEAD of main on this tree. Every
+# etna/<variant> branch is master + exactly one patch applied on top.
+
+[[variant]]
+name = "split_at_mut_rejects_len_c71ea23_1"
+property = "split_at_mut_accepts_len"
+injection = "patch"
+patch = "patches/split_at_mut_rejects_len_c71ea23_1.patch"
+source_commit = "c71ea233bbf62e7a9fd4a0ea06d4eaa1fb6b0e11"
+witnesses = [
+    "witness_split_at_mut_accepts_len_case_empty_right",
+    "witness_split_at_mut_accepts_len_case_zero_len",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/slice/api.rs"]
+
+[[variant]]
+name = "vec_insert_rejects_end_8e48751_1"
+property = "vec_insert_accepts_end"
+injection = "patch"
+patch = "patches/vec_insert_rejects_end_8e48751_1.patch"
+source_commit = "8e48751fa6cf0f6e64fb5a73b27bab0676a25a1f"
+witnesses = [
+    "witness_vec_insert_accepts_end_case_push_true",
+    "witness_vec_insert_accepts_end_case_empty_vec",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/vec/api.rs"]
+
+[[variant]]
+name = "leading_trailing_homogeneous_b08c4bd_1"
+property = "leading_trailing_fallback"
+injection = "patch"
+patch = "patches/leading_trailing_homogeneous_b08c4bd_1.patch"
+source_commit = "b08c4bd61fdadad7e5f8c2cd64bb98d29edff5b0"
+witnesses = [
+    "witness_leading_trailing_fallback_case_all_ones",
+    "witness_leading_trailing_fallback_case_all_zeros",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/slice/api.rs"]
+
+[[variant]]
+name = "bitvec_partial_cmp_reversed_f3d5b43_1"
+property = "bitvec_partial_cmp_matches"
+injection = "patch"
+patch = "patches/bitvec_partial_cmp_reversed_f3d5b43_1.patch"
+source_commit = "f3d5b43a9ae4bef6a0b45d4db5ad27adf3cfe3ee"
+witnesses = [
+    "witness_bitvec_partial_cmp_matches_case_lt",
+    "witness_bitvec_partial_cmp_matches_case_gt",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/vec/traits.rs"]
+
+[[variant]]
+name = "clone_from_bitslice_src_bug_935cad8_1"
+property = "clone_from_bitslice_copies_src"
+injection = "patch"
+patch = "patches/clone_from_bitslice_src_bug_935cad8_1.patch"
+source_commit = "935cad89f4ad87a92f72d9f2ce48d3d59ab7f23a"
+witnesses = [
+    "witness_clone_from_bitslice_copies_src_case_flip_all",
+    "witness_clone_from_bitslice_copies_src_case_alternating",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/slice.rs"]
+
+[[variant]]
+name = "octal_fmt_buffer_size_aeef0be_1"
+property = "octal_fmt_no_panic"
+injection = "patch"
+patch = "patches/octal_fmt_buffer_size_aeef0be_1.patch"
+source_commit = "aeef0bed4ac83f0cdf3d97c2f43957eab24d30f5"
+witnesses = [
+    "witness_octal_fmt_no_panic_case_one_u64",
+    "witness_octal_fmt_no_panic_case_three_u64",
+]
+frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+files = ["src/slice/traits.rs"]
