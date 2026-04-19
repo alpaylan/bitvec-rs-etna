@@ -1274,7 +1274,7 @@ where
 	/// ```
 	#[inline]
 	pub fn leading_ones(&self) -> usize {
-		self.first_zero().unwrap_or_else(|| self.len())
+		self.first_zero().unwrap_or_default()
 	}
 
 	/// Counts the number of bits from the start of the bit-slice to the first
@@ -1293,7 +1293,7 @@ where
 	/// ```
 	#[inline]
 	pub fn leading_zeros(&self) -> usize {
-		self.first_one().unwrap_or_else(|| self.len())
+		self.first_one().unwrap_or_default()
 	}
 
 	/// Counts the number of bits from the end of the bit-slice to the last bit
@@ -1312,8 +1312,7 @@ where
 	/// ```
 	#[inline]
 	pub fn trailing_ones(&self) -> usize {
-		let len = self.len();
-		self.last_zero().map(|idx| len - 1 - idx).unwrap_or(len)
+		self.last_zero().map(|idx| self.len() - 1 - idx).unwrap_or_default()
 	}
 
 	/// Counts the number of bits from the end of the bit-slice to the last bit
@@ -1332,8 +1331,7 @@ where
 	/// ```
 	#[inline]
 	pub fn trailing_zeros(&self) -> usize {
-		let len = self.len();
-		self.last_one().map(|idx| len - 1 - idx).unwrap_or(len)
+		self.last_one().map(|idx| self.len() - 1 - idx).unwrap_or_default()
 	}
 
 	/// Tests if there is at least one bit set to `1` in the bit-slice.
