@@ -198,7 +198,7 @@ where
 {
 	#[inline]
 	fn partial_cmp(&self, other: &Rhs) -> Option<cmp::Ordering> {
-		other.partial_cmp(self.as_bitslice()).map(|o| o.reverse())
+		other.partial_cmp(self.as_bitslice())
 	}
 }
 
