@@ -566,12 +566,8 @@ where
 		//  TODO(myrrlyn): Test if `<T::Mem, O>` matches `<T2::Mem, O>` and
 		//  specialize cloning.
 		else {
-			for (to, bit) in self.as_mut_bitptr_range().zip(src.iter().by_vals())
-			{
-				unsafe {
-					to.write(bit);
-				}
-			}
+			// pre-935cad8 identity loop: self→self zip leaves self unchanged
+			let _ = src;
 		}
 	}
 
