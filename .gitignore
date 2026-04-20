@@ -6,5 +6,4 @@ cobertura.xml
 .hegel/
 # Etna workload artifacts
 etna.log
-steps.json
 patches/*.orig
