@@ -1,88 +1,166 @@
-# ETNA workload index for bitvec.
-#
-# One [[variant]] per injected mutation. Source of truth for variant->property
-# mapping. Every other fact is derivable from the source tree:
-#   - ls patches/*.patch                          (patch-based variants)
-#   - grep -rn "pub fn property_" src/            (property functions)
-#   - grep -rn "fn witness_.*_case_" tests/       (witness tests)
-#
-# Base commit for this workload is HEAD of main on this tree. Every
-# etna/<variant> branch is master + exactly one patch applied on top.
+name = "bitvec-rs"
+language = "rust"
+crate = "bitvec"
+base_commit = "7cf6f88738a9e4043b0c97291670ec1cd430219c"
 
-[[variant]]
-name = "split_at_mut_rejects_len_c71ea23_1"
-property = "split_at_mut_accepts_len"
-injection = "patch"
+[[tasks]]
+mutations = ["split_at_mut_rejects_len_c71ea23_1"]
+
+[tasks.source]
+repo = "https://github.com/ferrilab/bitvec"
+commits = ["c71ea2344fd4a728263f33d66a9708d93c52dc48"]
+commit_subjects = ["fix split_at_mut as well"]
+summary = "`BitSlice::split_at_mut` asserted `mid < self.len()`, rejecting the exact-length split that should return `(self, empty)`. The fix bumps the assertion to `mid <= self.len()`, mirroring `slice::split_at_mut`'s inclusive bound."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/slice/api.rs"]
+locations = [{ file = "src/slice/api.rs" }]
 patch = "patches/split_at_mut_rejects_len_c71ea23_1.patch"
-source_commit = "c71ea233bbf62e7a9fd4a0ea06d4eaa1fb6b0e11"
-witnesses = [
-    "witness_split_at_mut_accepts_len_case_empty_right",
-    "witness_split_at_mut_accepts_len_case_zero_len",
-]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
-files = ["src/slice/api.rs"]
 
-[[variant]]
-name = "vec_insert_rejects_end_8e48751_1"
-property = "vec_insert_accepts_end"
-injection = "patch"
-patch = "patches/vec_insert_rejects_end_8e48751_1.patch"
-source_commit = "8e48751fa6cf0f6e64fb5a73b27bab0676a25a1f"
+[tasks.bug]
+short_name = "split_at_mut_rejects_len"
+invariant = "`split_at_mut(mid)` must accept `mid == self.len()`; the right half is simply empty."
+how_triggered = "Reverts the `assert_in_bounds` bound from `0 ..= self.len()` back to `0 .. self.len()`, so splitting at the exact length panics instead of yielding `(self, empty)`."
+
+[[tasks.tasks]]
+property = "SplitAtMutAcceptsLen"
 witnesses = [
-    "witness_vec_insert_accepts_end_case_push_true",
-    "witness_vec_insert_accepts_end_case_empty_vec",
+  { test_fn = "witness_split_at_mut_accepts_len_case_empty_right" },
+  { test_fn = "witness_split_at_mut_accepts_len_case_zero_len" },
 ]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+
+[[tasks]]
+mutations = ["vec_insert_rejects_end_8e48751_1"]
+
+[tasks.source]
+repo = "https://github.com/ferrilab/bitvec"
+commits = ["8e48751508526cbe0c656f4dffa60cf4e6e4bfb0"]
+commit_subjects = ["vec/api: fix insert for index == len"]
+summary = "`BitVec::insert` bounded the index with `0 .. self.len()`, so calling `bv.insert(bv.len(), v)` — the push-equivalent case — panicked. The fix widens the bound to `0 ..= self.len()`, aligning with `Vec::insert` semantics."
+
+[tasks.injection]
+kind = "patch"
 files = ["src/vec/api.rs"]
+locations = [{ file = "src/vec/api.rs" }]
+patch = "patches/vec_insert_rejects_end_8e48751_1.patch"
 
-[[variant]]
-name = "leading_trailing_homogeneous_b08c4bd_1"
-property = "leading_trailing_fallback"
-injection = "patch"
-patch = "patches/leading_trailing_homogeneous_b08c4bd_1.patch"
-source_commit = "b08c4bd61fdadad7e5f8c2cd64bb98d29edff5b0"
+[tasks.bug]
+short_name = "vec_insert_rejects_end"
+invariant = "`BitVec::insert(self.len(), v)` must be equivalent to `push(v)` — appending a bit at the tail, not panicking."
+how_triggered = "Reverts the inclusive upper bound so `assert_in_bounds(index, 0 .. self.len())` rejects the exact-length case, producing a panic on the push-equivalent call."
+
+[[tasks.tasks]]
+property = "VecInsertAcceptsEnd"
 witnesses = [
-    "witness_leading_trailing_fallback_case_all_ones",
-    "witness_leading_trailing_fallback_case_all_zeros",
+  { test_fn = "witness_vec_insert_accepts_end_case_push_true" },
+  { test_fn = "witness_vec_insert_accepts_end_case_empty_vec" },
 ]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+
+[[tasks]]
+mutations = ["leading_trailing_homogeneous_b08c4bd_1"]
+
+[tasks.source]
+repo = "https://github.com/ferrilab/bitvec"
+commits = ["b08c4bdde959c172d5e77fe1746e903688b804e4"]
+commit_subjects = ["Fix edge case for {leading,trailing}_{zero,one}"]
+summary = "`leading_ones`/`trailing_ones`/`leading_zeros`/`trailing_zeros` called `unwrap_or_default()` on the underlying `find_bit_*` helpers, so an all-same-value slice (where the search finds no boundary bit) returned `0` instead of the slice length. The fix switches to `unwrap_or(self.len())`."
+
+[tasks.injection]
+kind = "patch"
 files = ["src/slice/api.rs"]
+locations = [{ file = "src/slice/api.rs" }]
+patch = "patches/leading_trailing_homogeneous_b08c4bd_1.patch"
 
-[[variant]]
-name = "bitvec_partial_cmp_reversed_f3d5b43_1"
-property = "bitvec_partial_cmp_matches"
-injection = "patch"
-patch = "patches/bitvec_partial_cmp_reversed_f3d5b43_1.patch"
-source_commit = "f3d5b43a9ae4bef6a0b45d4db5ad27adf3cfe3ee"
+[tasks.bug]
+short_name = "leading_trailing_homogeneous"
+invariant = "For an N-bit slice whose bits are all `true` (resp. `false`), `leading_ones() == trailing_ones() == N` (resp. `…_zeros() == N`)."
+how_triggered = "The `unwrap_or_else(|| self.len())` / `unwrap_or(len)` fallbacks on the `find_bit_{ones,zeros}` helpers are reverted to `unwrap_or_default()`, so the all-same-value case falls through to `0` instead of the slice length."
+
+[[tasks.tasks]]
+property = "LeadingTrailingFallback"
 witnesses = [
-    "witness_bitvec_partial_cmp_matches_case_lt",
-    "witness_bitvec_partial_cmp_matches_case_gt",
+  { test_fn = "witness_leading_trailing_fallback_case_all_ones" },
+  { test_fn = "witness_leading_trailing_fallback_case_all_zeros" },
 ]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+
+[[tasks]]
+mutations = ["bitvec_partial_cmp_reversed_f3d5b43_1"]
+
+[tasks.source]
+repo = "https://github.com/ferrilab/bitvec"
+commits = ["f3d5b43000f6e9a52a233bf07c295929cce66387"]
+commit_subjects = ["Fix BitVec to BitSlice partial_cmp. Fixes #215"]
+summary = "The blanket `PartialOrd<Rhs> for BitVec<T, O>` impl delegated via `other.partial_cmp(self.as_bitslice())` but forgot to reverse the result, so comparing a `BitVec` to a `BitSlice` returned the opposite ordering from the direct `BitVec: PartialOrd<BitVec>` impl. The fix adds `.map(|o| o.reverse())`."
+
+[tasks.injection]
+kind = "patch"
 files = ["src/vec/traits.rs"]
+locations = [{ file = "src/vec/traits.rs" }]
+patch = "patches/bitvec_partial_cmp_reversed_f3d5b43_1.patch"
 
-[[variant]]
-name = "clone_from_bitslice_src_bug_935cad8_1"
-property = "clone_from_bitslice_copies_src"
-injection = "patch"
-patch = "patches/clone_from_bitslice_src_bug_935cad8_1.patch"
-source_commit = "935cad89f4ad87a92f72d9f2ce48d3d59ab7f23a"
+[tasks.bug]
+short_name = "bitvec_partial_cmp_reversed"
+invariant = "`bv.partial_cmp(bv.as_bitslice())` must match `bv.partial_cmp(&bv)` (and transitively, ordering between equal-content `BitVec`s and `BitSlice`s must agree)."
+how_triggered = "Drops the `.map(|o| o.reverse())` on the `impl<T, O, Rhs> PartialOrd<Rhs> for BitVec<T, O>` blanket, so delegating through `other.partial_cmp(self.as_bitslice())` returns the inverted ordering relative to the direct `BitVec: PartialOrd<BitVec>` impl."
+
+[[tasks.tasks]]
+property = "BitvecPartialCmpMatches"
 witnesses = [
-    "witness_clone_from_bitslice_copies_src_case_flip_all",
-    "witness_clone_from_bitslice_copies_src_case_alternating",
+  { test_fn = "witness_bitvec_partial_cmp_matches_case_lt" },
+  { test_fn = "witness_bitvec_partial_cmp_matches_case_gt" },
 ]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+
+[[tasks]]
+mutations = ["clone_from_bitslice_src_bug_935cad8_1"]
+
+[tasks.source]
+repo = "https://github.com/ferrilab/bitvec"
+commits = ["935cad8888d0f09837b95000c44f4a56579c7108"]
+commit_subjects = ["Fix a bug in BitSlice::clone_from_bitslice"]
+summary = "When the coerce fast path did not apply (different `T`/`O` parameters on source and destination), `clone_from_bitslice` fell through to a `self → self` zip that left `dst` unchanged instead of copying bits from `src`. The fix makes the fallback actually read from `src`."
+
+[tasks.injection]
+kind = "patch"
 files = ["src/slice.rs"]
+locations = [{ file = "src/slice.rs" }]
+patch = "patches/clone_from_bitslice_src_bug_935cad8_1.patch"
 
-[[variant]]
-name = "octal_fmt_buffer_size_aeef0be_1"
-property = "octal_fmt_no_panic"
-injection = "patch"
-patch = "patches/octal_fmt_buffer_size_aeef0be_1.patch"
-source_commit = "aeef0bed4ac83f0cdf3d97c2f43957eab24d30f5"
+[tasks.bug]
+short_name = "clone_from_bitslice_src_bug"
+invariant = "After `dst.clone_from_bitslice(&src)` (equal-length slices), every bit of `dst` must equal the corresponding bit of `src`."
+how_triggered = "The non-coerce fallback branch is gutted to an identity loop (semantically equivalent to the pre-935cad8 `self->self` zip), so when the `<T, O>` and `<T2, O2>` parameters differ — defeating the coerce fast path — `dst` is left unchanged. The property uses heterogeneous `<u8, Lsb0>` / `<u16, Msb0>` to force the fallback."
+
+[[tasks.tasks]]
+property = "CloneFromBitsliceCopiesSrc"
 witnesses = [
-    "witness_octal_fmt_no_panic_case_one_u64",
-    "witness_octal_fmt_no_panic_case_three_u64",
+  { test_fn = "witness_clone_from_bitslice_copies_src_case_flip_all" },
+  { test_fn = "witness_clone_from_bitslice_copies_src_case_alternating" },
 ]
-frameworks = ["proptest", "quickcheck", "crabcheck", "hegel"]
+
+[[tasks]]
+mutations = ["octal_fmt_buffer_size_aeef0be_1"]
+
+[tasks.source]
+repo = "https://github.com/ferrilab/bitvec"
+commits = ["aeef0be672538b8f6694f464bd947084813fb327"]
+commit_subjects = ["Ensure correct buffer size during Octal::fmt"]
+summary = "`Octal::fmt` preallocated a digit buffer of width `usize::BITS / 3` (floor) instead of `ceil(usize::BITS / 3)`, so each storage-element body chunk lost one octal digit. The fix adds `+ (usize::BITS % 3 != 0) as usize`, rounding up."
+
+[tasks.injection]
+kind = "patch"
 files = ["src/slice/traits.rs"]
+locations = [{ file = "src/slice/traits.rs" }]
+patch = "patches/octal_fmt_buffer_size_aeef0be_1.patch"
+
+[tasks.bug]
+short_name = "octal_fmt_buffer_size"
+invariant = "Formatting a `BitSlice` via the `Octal` trait must emit `ceil(bits / 3)` octal digits per storage-element body chunk. A `BitSlice<u64, _>` of 64 bits must emit 22 digits, not 21."
+how_triggered = "The pre-allocated digit buffer width `W = D + (M != 0)` (with `D = usize::BITS / 3`, `M = usize::BITS % 3`) is reverted to `W = D`, dropping the ceiling. The per-chunk zip against the under-sized buffer truncates one octal digit from each 64-bit body chunk."
+
+[[tasks.tasks]]
+property = "OctalFmtNoPanic"
+witnesses = [
+  { test_fn = "witness_octal_fmt_no_panic_case_one_u64" },
+  { test_fn = "witness_octal_fmt_no_panic_case_three_u64" },
+]

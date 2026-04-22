@@ -7,3 +7,6 @@ cobertura.xml
 # Etna workload artifacts
 etna.log
 patches/*.orig
+.marauders/
+.migration-cache/
+progress.jsonl
