@@ -60,8 +60,8 @@ testing = [
 radium = "0.7"
 tap = "1"
 proptest   = "1"
-quickcheck = { path = "/Users/akeles/Programming/projects/PbtBenchmark/quickcheck", features = ["etna"] }
-crabcheck  = { path = "/Users/akeles/Programming/projects/PbtBenchmark/crabcheck" }
+quickcheck = { git = "https://github.com/alpaylan/quickcheck.git", branch = "master", features = ["etna"] }
+crabcheck  = { git = "https://github.com/alpaylan/crabcheck.git", branch = "main" }
 hegeltest  = "0.3.7"
 
 [dependencies.funty]
