@@ -1,5 +1,6 @@
-name = "bitvec-rs"
+name = "bitvec"
 language = "rust"
+strategies = ["proptest", "quickcheck", "crabcheck", "hegel"]
 crate = "bitvec"
 base_commit = "7cf6f88738a9e4043b0c97291670ec1cd430219c"
 
