@@ -23,10 +23,15 @@ fn expect_pass(r: PropertyResult, what: &str) {
 //
 // Mutation restores an exclusive upper bound on `split_at_mut`, so calling
 // `split_at_mut(len)` — a valid split that yields an empty right slice — panics.
+//
+// We pass `mid_seed = len` so that `mid_seed % (len + 1) == len`, hitting the
+// boundary case that the patched assertion rejects.
 #[test]
 fn witness_split_at_mut_accepts_len_case_empty_right() {
+    let seed = vec![false, true, false, true];
+    let mid_seed = seed.len(); // -> mid == len
     expect_pass(
-        property_split_at_mut_accepts_len(vec![false, true, false, true]),
+        property_split_at_mut_accepts_len(seed, mid_seed),
         "split_at_mut accepts self.len()",
     );
 }
@@ -34,7 +39,7 @@ fn witness_split_at_mut_accepts_len_case_empty_right() {
 #[test]
 fn witness_split_at_mut_accepts_len_case_zero_len() {
     expect_pass(
-        property_split_at_mut_accepts_len(vec![]),
+        property_split_at_mut_accepts_len(vec![], 0),
         "split_at_mut accepts self.len() on empty",
     );
 }
@@ -43,10 +48,15 @@ fn witness_split_at_mut_accepts_len_case_zero_len() {
 //
 // Mutation reverts `BitVec::insert` to use an exclusive upper bound, so
 // `bv.insert(bv.len(), v)` — which should be equivalent to `push` — panics.
+//
+// We pass `index_seed = seed.len()` so that `index_seed % (len + 1) == len`,
+// hitting the push-equivalent boundary that the patched assertion rejects.
 #[test]
 fn witness_vec_insert_accepts_end_case_push_true() {
+    let seed = vec![false, false, true];
+    let index_seed = seed.len(); // -> index == len
     expect_pass(
-        property_vec_insert_accepts_end(vec![false, false, true], true),
+        property_vec_insert_accepts_end(seed, true, index_seed),
         "insert(len, true)",
     );
 }
@@ -54,7 +64,7 @@ fn witness_vec_insert_accepts_end_case_push_true() {
 #[test]
 fn witness_vec_insert_accepts_end_case_empty_vec() {
     expect_pass(
-        property_vec_insert_accepts_end(vec![], true),
+        property_vec_insert_accepts_end(vec![], true, 0),
         "insert(0, _) on empty vec",
     );
 }

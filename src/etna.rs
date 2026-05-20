@@ -33,43 +33,62 @@ fn clamp_len(n: usize) -> usize {
     n % 64
 }
 
-/// `split_at_mut(mid)` must accept `mid == self.len()` without panicking — the
-/// right slice simply has zero length. Detects the c71ea23 bug where
-/// `split_at_mut` used `assert_in_bounds(mid, 0..self.len())` instead of
-/// `0..=self.len()`, so splitting at exactly the length panicked.
-pub fn property_split_at_mut_accepts_len(seed: Vec<bool>) -> PropertyResult {
+/// `split_at_mut(mid)` must accept any `mid` in `0..=self.len()` without
+/// panicking — when `mid == self.len()`, the right slice is simply empty.
+/// Detects the c71ea23 bug where `split_at_mut` used
+/// `assert_in_bounds(mid, 0..self.len())` instead of `0..=self.len()`, so
+/// splitting at exactly the length panicked.
+///
+/// `mid_seed` is mapped via `mid_seed % (len + 1)` so the property is
+/// library-faithful: any drawn seed picks a valid `mid` somewhere in the
+/// inclusive range, and the `mid == len` boundary that exercises the patched
+/// assertion is hit only ~1/(len+1) of the time.
+pub fn property_split_at_mut_accepts_len(seed: Vec<bool>, mid_seed: usize) -> PropertyResult {
     let bits = seed;
     let mut bv = bools_to_bitvec(&bits);
     let len = bv.len();
+    let mid = mid_seed % (len + 1);
     let result = catch_unwind(AssertUnwindSafe(|| {
         let slice = bv.as_mut_bitslice();
-        let (left, right) = slice.split_at_mut(len);
+        let (left, right) = slice.split_at_mut(mid);
         (left.len(), right.len())
     }));
     match result {
         Ok((l, r)) => {
-            if l == len && r == 0 {
+            if l == mid && r == len - mid {
                 PropertyResult::Pass
             } else {
                 PropertyResult::Fail(format!(
-                    "split_at_mut(len={len}) returned sizes ({l},{r}); expected ({len},0)"
+                    "split_at_mut(mid={mid}, len={len}) returned sizes ({l},{r}); expected ({mid},{})",
+                    len - mid
                 ))
             }
         }
         Err(_) => PropertyResult::Fail(format!(
-            "split_at_mut(len={len}) panicked; must accept mid == self.len()"
+            "split_at_mut(mid={mid}) panicked; must accept any mid in 0..=self.len()={len}"
         )),
     }
 }
 
-/// `BitVec::insert(index, value)` must accept `index == self.len()` (equivalent
-/// to `push`). Detects the 8e48751 bug where `insert` used `assert_in_bounds`
-/// with an exclusive upper bound, so `bv.insert(bv.len(), v)` panicked.
-pub fn property_vec_insert_accepts_end(seed: Vec<bool>, value: bool) -> PropertyResult {
+/// `BitVec::insert(index, value)` must accept any `index` in `0..=self.len()`.
+/// The `index == self.len()` case is equivalent to `push`. Detects the 8e48751
+/// bug where `insert` used `assert_in_bounds` with an exclusive upper bound,
+/// so `bv.insert(bv.len(), v)` panicked.
+///
+/// `index_seed` is mapped via `index_seed % (len + 1)` so the property is
+/// library-faithful: any drawn seed picks a valid `index` somewhere in the
+/// inclusive range, and the `index == len` boundary that exercises the patched
+/// assertion is hit only ~1/(len+1) of the time.
+pub fn property_vec_insert_accepts_end(
+    seed: Vec<bool>,
+    value: bool,
+    index_seed: usize,
+) -> PropertyResult {
     let mut bv = bools_to_bitvec(&seed);
     let len_before = bv.len();
+    let index = index_seed % (len_before + 1);
     let result = catch_unwind(AssertUnwindSafe(|| {
-        bv.insert(len_before, value);
+        bv.insert(index, value);
         bv
     }));
     match result {
@@ -77,19 +96,38 @@ pub fn property_vec_insert_accepts_end(seed: Vec<bool>, value: bool) -> Property
             let new_len = bv_after.len();
             if new_len != len_before + 1 {
                 return PropertyResult::Fail(format!(
-                    "insert(len, _) produced len {new_len}; expected {}",
+                    "insert({index}, _) produced len {new_len}; expected {}",
                     len_before + 1
                 ));
             }
-            if bv_after[len_before] != value {
+            if bv_after[index] != value {
                 return PropertyResult::Fail(format!(
-                    "insert(len, {value}) placed the wrong bit at the tail"
+                    "insert({index}, {value}) placed the wrong bit at index {index}"
                 ));
+            }
+            // Bits before `index` must be unchanged from the original seed.
+            for i in 0..index {
+                if bv_after[i] != seed[i] {
+                    return PropertyResult::Fail(format!(
+                        "insert({index}, _) corrupted bit {i}: got {} expected {}",
+                        bv_after[i], seed[i]
+                    ));
+                }
+            }
+            // Bits after `index` must equal the original `seed[i-1]`.
+            for i in (index + 1)..new_len {
+                if bv_after[i] != seed[i - 1] {
+                    return PropertyResult::Fail(format!(
+                        "insert({index}, _) corrupted bit {i}: got {} expected {}",
+                        bv_after[i],
+                        seed[i - 1]
+                    ));
+                }
             }
             PropertyResult::Pass
         }
         Err(_) => PropertyResult::Fail(format!(
-            "insert({len_before}, _) panicked — must accept index == self.len()"
+            "insert({index}, _) panicked — must accept any index in 0..=self.len()={len_before}"
         )),
     }
 }

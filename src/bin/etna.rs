@@ -16,10 +16,13 @@ use bitvec::etna::{
     property_split_at_mut_accepts_len, property_vec_insert_accepts_end, PropertyResult,
 };
 use crabcheck::quickcheck as crabcheck_qc;
+use crabcheck::quickcheck::Arbitrary as CcArbitrary;
 use hegel::{generators as hgen, Hegel, Settings as HegelSettings};
 use proptest::prelude::*;
-use proptest::test_runner::{Config as ProptestConfig, TestCaseError, TestRunner};
-use quickcheck::{QuickCheck, ResultStatus, TestResult};
+use proptest::test_runner::{Config as ProptestConfig, TestCaseError, TestError, TestRunner};
+use quickcheck::{Arbitrary as QcArbitrary, Gen, QuickCheck, ResultStatus, TestResult};
+use rand::Rng;
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -75,12 +78,15 @@ fn run_etna_property(property: &str) -> Outcome {
     }
     let t0 = Instant::now();
     let result = match property {
-        "SplitAtMutAcceptsLen" => to_err(property_split_at_mut_accepts_len(vec![
-            false, true, false, true,
-        ])),
-        "VecInsertAcceptsEnd" => {
-            to_err(property_vec_insert_accepts_end(vec![false, false, true], true))
-        }
+        "SplitAtMutAcceptsLen" => to_err(property_split_at_mut_accepts_len(
+            vec![false, true, false, true],
+            4, // mid_seed % (len+1=5) == 4 == len → boundary case
+        )),
+        "VecInsertAcceptsEnd" => to_err(property_vec_insert_accepts_end(
+            vec![false, false, true],
+            true,
+            3, // index_seed % (len+1=4) == 3 == len → push-equivalent
+        )),
         "LeadingTrailingFallback" => {
             to_err(property_leading_trailing_fallback(vec![true; 5], true))
         }
@@ -99,6 +105,47 @@ fn run_etna_property(property: &str) -> Outcome {
     (result, Metrics { inputs: 1, elapsed_us })
 }
 
+// ───────────── shared generator: Bits ─────────────
+//
+// Target shape matches proptest: `vec(any::<bool>(), 0..32)` —
+// length uniform in 0..=31, each element 50/50 bool.
+#[derive(Clone)]
+struct Bits(Vec<bool>);
+
+impl fmt::Debug for Bits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Display for Bits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl QcArbitrary for Bits {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let len = g.random_range(0..32u32) as usize;
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            out.push(g.random_range(0..=1u8) == 1);
+        }
+        Bits(out)
+    }
+}
+
+impl<R: Rng> CcArbitrary<R> for Bits {
+    fn generate(rng: &mut R, _n: usize) -> Self {
+        let len = rng.random_range(0..32u32) as usize;
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            out.push(rng.random_bool(0.5));
+        }
+        Bits(out)
+    }
+}
+
 // --- Proptest ---
 
 fn bool_vec_strategy() -> BoxedStrategy<Vec<bool>> {
@@ -111,66 +158,73 @@ fn run_proptest_property(property: &str) -> Outcome {
     }
     let counter = Arc::new(AtomicU64::new(0));
     let t0 = Instant::now();
-    let mut runner = TestRunner::new(ProptestConfig::default());
+    let mut runner = TestRunner::new(ProptestConfig { cases: 40_000_000, ..ProptestConfig::default() });
     let c = counter.clone();
     let result: Result<(), String> = match property {
         "SplitAtMutAcceptsLen" => runner
-            .run(&bool_vec_strategy(), move |seed| {
+            .run(&(bool_vec_strategy(), any::<usize>()), move |(seed, mid_seed)| {
                 c.fetch_add(1, Ordering::Relaxed);
-                match property_split_at_mut_accepts_len(seed) {
+                let seed_cex = seed.clone();
+                match property_split_at_mut_accepts_len(seed, mid_seed) {
                     PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                    PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                    PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({:?} {})", seed_cex, mid_seed))),
                 }
             })
-            .map_err(|e| e.to_string()),
+            .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() }),
         "VecInsertAcceptsEnd" => runner
-            .run(&(bool_vec_strategy(), any::<bool>()), move |(seed, value)| {
+            .run(&(bool_vec_strategy(), any::<bool>(), any::<usize>()), move |(seed, value, index_seed)| {
                 c.fetch_add(1, Ordering::Relaxed);
-                match property_vec_insert_accepts_end(seed, value) {
+                let seed_cex = seed.clone();
+                match property_vec_insert_accepts_end(seed, value, index_seed) {
                     PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                    PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                    PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({:?} {} {})", seed_cex, value, index_seed))),
                 }
             })
-            .map_err(|e| e.to_string()),
+            .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() }),
         "LeadingTrailingFallback" => runner
             .run(
                 &(bool_vec_strategy(), any::<bool>()),
                 move |(seed, all_ones)| {
                     c.fetch_add(1, Ordering::Relaxed);
+                    let seed_cex = seed.clone();
                     match property_leading_trailing_fallback(seed, all_ones) {
                         PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                        PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                        PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({:?} {})", seed_cex, all_ones))),
                     }
                 },
             )
-            .map_err(|e| e.to_string()),
+            .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() }),
         "BitVecPartialCmpMatches" => runner
             .run(&(bool_vec_strategy(), bool_vec_strategy()), move |(a, b)| {
                 c.fetch_add(1, Ordering::Relaxed);
+                let a_cex = a.clone();
+                let b_cex = b.clone();
                 match property_bitvec_partial_cmp_matches(a, b) {
                     PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                    PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                    PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({:?} {:?})", a_cex, b_cex))),
                 }
             })
-            .map_err(|e| e.to_string()),
+            .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() }),
         "CloneFromBitsliceCopiesSrc" => runner
             .run(&(bool_vec_strategy(), bool_vec_strategy()), move |(d, s)| {
                 c.fetch_add(1, Ordering::Relaxed);
+                let d_cex = d.clone();
+                let s_cex = s.clone();
                 match property_clone_from_bitslice_copies_src(d, s) {
                     PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                    PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                    PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({:?} {:?})", d_cex, s_cex))),
                 }
             })
-            .map_err(|e| e.to_string()),
+            .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() }),
         "OctalFmtNoPanic" => runner
             .run(&any::<u8>(), move |n| {
                 c.fetch_add(1, Ordering::Relaxed);
                 match property_octal_fmt_no_panic(n) {
                     PropertyResult::Pass | PropertyResult::Discard => Ok(()),
-                    PropertyResult::Fail(m) => Err(TestCaseError::fail(m)),
+                    PropertyResult::Fail(_) => Err(TestCaseError::fail(format!("({})", n))),
                 }
             })
-            .map_err(|e| e.to_string()),
+            .map_err(|e| match e { TestError::Fail(reason, _) => reason.to_string(), other => other.to_string() }),
         _ => {
             return (
                 Err(format!("Unknown property for proptest: {property}")),
@@ -187,57 +241,45 @@ fn run_proptest_property(property: &str) -> Outcome {
 
 static QC_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-// Deterministically expand a u64 seed into a bounded Vec<bool>.
-fn seed_to_bool_vec(seed: u64) -> Vec<bool> {
-    let len = (seed % 32) as usize;
-    let mut out = Vec::with_capacity(len);
-    let mut s = seed.rotate_right(5);
-    for _ in 0..len {
-        out.push(s & 1 == 1);
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
-    }
-    out
-}
-
-fn qc_split_at_mut_accepts_len(seed: u64) -> TestResult {
+fn qc_split_at_mut_accepts_len(Bits(seed): Bits, mid_seed: usize) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_split_at_mut_accepts_len(seed_to_bool_vec(seed)) {
+    match property_split_at_mut_accepts_len(seed, mid_seed) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
         PropertyResult::Fail(_) => TestResult::failed(),
     }
 }
 
-fn qc_vec_insert_accepts_end(seed: u64, value: bool) -> TestResult {
+fn qc_vec_insert_accepts_end(Bits(seed): Bits, value: bool, index_seed: usize) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_vec_insert_accepts_end(seed_to_bool_vec(seed), value) {
+    match property_vec_insert_accepts_end(seed, value, index_seed) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
         PropertyResult::Fail(_) => TestResult::failed(),
     }
 }
 
-fn qc_leading_trailing_fallback(seed: u64, all_ones: bool) -> TestResult {
+fn qc_leading_trailing_fallback(Bits(seed): Bits, all_ones: bool) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_leading_trailing_fallback(seed_to_bool_vec(seed), all_ones) {
+    match property_leading_trailing_fallback(seed, all_ones) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
         PropertyResult::Fail(_) => TestResult::failed(),
     }
 }
 
-fn qc_bitvec_partial_cmp_matches(a: u64, b: u64) -> TestResult {
+fn qc_bitvec_partial_cmp_matches(Bits(a): Bits, Bits(b): Bits) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_bitvec_partial_cmp_matches(seed_to_bool_vec(a), seed_to_bool_vec(b)) {
+    match property_bitvec_partial_cmp_matches(a, b) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
         PropertyResult::Fail(_) => TestResult::failed(),
     }
 }
 
-fn qc_clone_from_bitslice_copies_src(a: u64, b: u64) -> TestResult {
+fn qc_clone_from_bitslice_copies_src(Bits(a): Bits, Bits(b): Bits) -> TestResult {
     QC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_clone_from_bitslice_copies_src(seed_to_bool_vec(a), seed_to_bool_vec(b)) {
+    match property_clone_from_bitslice_copies_src(a, b) {
         PropertyResult::Pass => TestResult::passed(),
         PropertyResult::Discard => TestResult::discard(),
         PropertyResult::Fail(_) => TestResult::failed(),
@@ -259,22 +301,22 @@ fn run_quickcheck_property(property: &str) -> Outcome {
     }
     QC_COUNTER.store(0, Ordering::Relaxed);
     let t0 = Instant::now();
-    let mut qc = QuickCheck::new().tests(200).max_tests(2000);
+    let mut qc = QuickCheck::new().tests(40_000_000).max_tests(80_000_000);
     let result = match property {
         "SplitAtMutAcceptsLen" => {
-            qc.quicktest(qc_split_at_mut_accepts_len as fn(u64) -> TestResult)
+            qc.quicktest(qc_split_at_mut_accepts_len as fn(Bits, usize) -> TestResult)
         }
         "VecInsertAcceptsEnd" => {
-            qc.quicktest(qc_vec_insert_accepts_end as fn(u64, bool) -> TestResult)
+            qc.quicktest(qc_vec_insert_accepts_end as fn(Bits, bool, usize) -> TestResult)
         }
         "LeadingTrailingFallback" => {
-            qc.quicktest(qc_leading_trailing_fallback as fn(u64, bool) -> TestResult)
+            qc.quicktest(qc_leading_trailing_fallback as fn(Bits, bool) -> TestResult)
         }
         "BitVecPartialCmpMatches" => {
-            qc.quicktest(qc_bitvec_partial_cmp_matches as fn(u64, u64) -> TestResult)
+            qc.quicktest(qc_bitvec_partial_cmp_matches as fn(Bits, Bits) -> TestResult)
         }
         "CloneFromBitsliceCopiesSrc" => qc.quicktest(
-            qc_clone_from_bitslice_copies_src as fn(u64, u64) -> TestResult,
+            qc_clone_from_bitslice_copies_src as fn(Bits, Bits) -> TestResult,
         ),
         "OctalFmtNoPanic" => qc.quicktest(qc_octal_fmt_no_panic as fn(u8) -> TestResult),
         _ => {
@@ -290,7 +332,7 @@ fn run_quickcheck_property(property: &str) -> Outcome {
     let status = match result.status {
         ResultStatus::Finished => Ok(()),
         ResultStatus::Failed { arguments } => Err(format!(
-            "quickcheck failed with counterexample: ({})",
+            "({})",
             arguments.join(" ")
         )),
         ResultStatus::Aborted { err } => Err(format!("quickcheck aborted: {err:?}")),
@@ -307,63 +349,56 @@ fn run_quickcheck_property(property: &str) -> Outcome {
 
 static CC_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn cc_seed_to_bool_vec(n: usize) -> Vec<bool> {
-    let len = n % 32;
-    let mut out = Vec::with_capacity(len);
-    for i in 0..len {
-        out.push((n.wrapping_mul(2654435761).wrapping_add(i)) & 1 == 1);
-    }
-    out
-}
-
-fn cc_split_at_mut_accepts_len(n: usize) -> Option<bool> {
+fn cc_split_at_mut_accepts_len((Bits(seed), mid_seed): (Bits, usize)) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_split_at_mut_accepts_len(cc_seed_to_bool_vec(n)) {
+    match property_split_at_mut_accepts_len(seed, mid_seed) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
     }
 }
 
-fn cc_vec_insert_accepts_end((n, v): (usize, usize)) -> Option<bool> {
+fn cc_vec_insert_accepts_end(
+    (Bits(seed), v, index_seed): (Bits, bool, usize),
+) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_vec_insert_accepts_end(cc_seed_to_bool_vec(n), v & 1 == 1) {
+    match property_vec_insert_accepts_end(seed, v, index_seed) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
     }
 }
 
-fn cc_leading_trailing_fallback((n, v): (usize, usize)) -> Option<bool> {
+fn cc_leading_trailing_fallback((Bits(seed), v): (Bits, bool)) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_leading_trailing_fallback(cc_seed_to_bool_vec(n), v & 1 == 1) {
+    match property_leading_trailing_fallback(seed, v) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
     }
 }
 
-fn cc_bitvec_partial_cmp_matches((a, b): (usize, usize)) -> Option<bool> {
+fn cc_bitvec_partial_cmp_matches((Bits(a), Bits(b)): (Bits, Bits)) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_bitvec_partial_cmp_matches(cc_seed_to_bool_vec(a), cc_seed_to_bool_vec(b)) {
+    match property_bitvec_partial_cmp_matches(a, b) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
     }
 }
 
-fn cc_clone_from_bitslice_copies_src((a, b): (usize, usize)) -> Option<bool> {
+fn cc_clone_from_bitslice_copies_src((Bits(a), Bits(b)): (Bits, Bits)) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_clone_from_bitslice_copies_src(cc_seed_to_bool_vec(a), cc_seed_to_bool_vec(b)) {
+    match property_clone_from_bitslice_copies_src(a, b) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
     }
 }
 
-fn cc_octal_fmt_no_panic(n: usize) -> Option<bool> {
+fn cc_octal_fmt_no_panic(n: u8) -> Option<bool> {
     CC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    match property_octal_fmt_no_panic(n as u8) {
+    match property_octal_fmt_no_panic(n) {
         PropertyResult::Pass => Some(true),
         PropertyResult::Fail(_) => Some(false),
         PropertyResult::Discard => None,
@@ -397,10 +432,9 @@ fn run_crabcheck_property(property: &str) -> Outcome {
     let metrics = Metrics { inputs, elapsed_us };
     let status = match result.status {
         crabcheck_qc::ResultStatus::Finished => Ok(()),
-        crabcheck_qc::ResultStatus::Failed { arguments } => Err(format!(
-            "crabcheck failed with counterexample: ({})",
-            arguments.join(" ")
-        )),
+        crabcheck_qc::ResultStatus::Failed { arguments } => {
+            Err(format!("({})", arguments.join(" ")))
+        },
         crabcheck_qc::ResultStatus::TimedOut => Err("crabcheck timed out".to_string()),
         crabcheck_qc::ResultStatus::GaveUp => Err(format!(
             "crabcheck gave up: passed={}, discarded={}",
@@ -418,14 +452,15 @@ fn run_crabcheck_property(property: &str) -> Outcome {
 static HG_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn hegel_settings() -> HegelSettings {
-    HegelSettings::new().test_cases(200).seed(Some(0xB17_EC_1))
+    HegelSettings::new().test_cases(40_000_000)
 }
 
 fn hegel_draw_bool_vec(tc: &hegel::TestCase) -> Vec<bool> {
-    let len = tc.draw(hgen::integers::<u8>()) as usize % 32;
+    // Match proptest: len 0..=31, each element 50/50 bool.
+    let len = tc.draw(hgen::integers::<u32>().min_value(0).max_value(31)) as usize;
     let mut out = Vec::with_capacity(len);
     for _ in 0..len {
-        out.push(tc.draw(hgen::integers::<u8>()) & 1 == 1);
+        out.push(tc.draw(hgen::integers::<u8>().min_value(0).max_value(1)) == 1);
     }
     out
 }
@@ -442,8 +477,14 @@ fn run_hegel_property(property: &str) -> Outcome {
             Hegel::new(|tc: hegel::TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let seed = hegel_draw_bool_vec(&tc);
-                if let PropertyResult::Fail(m) = property_split_at_mut_accepts_len(seed) {
-                    panic!("{m}");
+                // Draw mid_seed across 0..=len so the boundary case (mid == len)
+                // is hit ~1/(len+1) of the time, library-faithful style.
+                let max_mid = seed.len() as u32;
+                let mid_seed =
+                    tc.draw(hgen::integers::<u32>().min_value(0).max_value(max_mid)) as usize;
+                let seed_cex = seed.clone();
+                if let PropertyResult::Fail(_) = property_split_at_mut_accepts_len(seed, mid_seed) {
+                    panic!("({:?} {})", seed_cex, mid_seed);
                 }
             })
             .settings(settings.clone())
@@ -453,9 +494,18 @@ fn run_hegel_property(property: &str) -> Outcome {
             Hegel::new(|tc: hegel::TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let seed = hegel_draw_bool_vec(&tc);
-                let v = tc.draw(hgen::integers::<u8>()) & 1 == 1;
-                if let PropertyResult::Fail(m) = property_vec_insert_accepts_end(seed, v) {
-                    panic!("{m}");
+                let v = tc.draw(hgen::integers::<u8>().min_value(0).max_value(1)) == 1;
+                // Draw index_seed across 0..=len so the push-equivalent case
+                // (index == len) is hit ~1/(len+1) of the time.
+                let max_index = seed.len() as u32;
+                let index_seed = tc.draw(
+                    hgen::integers::<u32>().min_value(0).max_value(max_index),
+                ) as usize;
+                let seed_cex = seed.clone();
+                if let PropertyResult::Fail(_) =
+                    property_vec_insert_accepts_end(seed, v, index_seed)
+                {
+                    panic!("({:?} {} {})", seed_cex, v, index_seed);
                 }
             })
             .settings(settings.clone())
@@ -465,9 +515,10 @@ fn run_hegel_property(property: &str) -> Outcome {
             Hegel::new(|tc: hegel::TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let seed = hegel_draw_bool_vec(&tc);
-                let v = tc.draw(hgen::integers::<u8>()) & 1 == 1;
-                if let PropertyResult::Fail(m) = property_leading_trailing_fallback(seed, v) {
-                    panic!("{m}");
+                let v = tc.draw(hgen::integers::<u8>().min_value(0).max_value(1)) == 1;
+                let seed_cex = seed.clone();
+                if let PropertyResult::Fail(_) = property_leading_trailing_fallback(seed, v) {
+                    panic!("({:?} {})", seed_cex, v);
                 }
             })
             .settings(settings.clone())
@@ -478,8 +529,10 @@ fn run_hegel_property(property: &str) -> Outcome {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let a = hegel_draw_bool_vec(&tc);
                 let b = hegel_draw_bool_vec(&tc);
-                if let PropertyResult::Fail(m) = property_bitvec_partial_cmp_matches(a, b) {
-                    panic!("{m}");
+                let a_cex = a.clone();
+                let b_cex = b.clone();
+                if let PropertyResult::Fail(_) = property_bitvec_partial_cmp_matches(a, b) {
+                    panic!("({:?} {:?})", a_cex, b_cex);
                 }
             })
             .settings(settings.clone())
@@ -490,8 +543,10 @@ fn run_hegel_property(property: &str) -> Outcome {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let d = hegel_draw_bool_vec(&tc);
                 let s = hegel_draw_bool_vec(&tc);
-                if let PropertyResult::Fail(m) = property_clone_from_bitslice_copies_src(d, s) {
-                    panic!("{m}");
+                let d_cex = d.clone();
+                let s_cex = s.clone();
+                if let PropertyResult::Fail(_) = property_clone_from_bitslice_copies_src(d, s) {
+                    panic!("({:?} {:?})", d_cex, s_cex);
                 }
             })
             .settings(settings.clone())
@@ -500,9 +555,9 @@ fn run_hegel_property(property: &str) -> Outcome {
         "OctalFmtNoPanic" => {
             Hegel::new(|tc: hegel::TestCase| {
                 HG_COUNTER.fetch_add(1, Ordering::Relaxed);
-                let n = tc.draw(hgen::integers::<u32>()) as u8;
-                if let PropertyResult::Fail(m) = property_octal_fmt_no_panic(n) {
-                    panic!("{m}");
+                let n = tc.draw(hgen::integers::<u8>());
+                if let PropertyResult::Fail(_) = property_octal_fmt_no_panic(n) {
+                    panic!("({})", n);
                 }
             })
             .settings(settings.clone())
@@ -529,7 +584,7 @@ fn run_hegel_property(property: &str) -> Outcome {
                     Metrics::default(),
                 );
             }
-            Err(format!("hegel found counterexample: {msg}"))
+            Err(msg.strip_prefix("Property test failed: ").unwrap_or(&msg).to_string())
         }
     };
     (status, metrics)
